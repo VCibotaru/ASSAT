@@ -23,17 +23,28 @@ class Const:
     SXML = ConstString('sxml', 'list all occurrences of getSharedPreferences() and setSharedPreferences()')
     SKEY = ConstString('skey', 'list all occurrences of KeyChain/KeyStore objects')
     SCRYPT = ConstString('scrypt', 'list all occurrences of cryptographic methods')
+    SFIND = ConstString('sfind', 'list all occurrences of given pattern')
     DXML = ConstString('dxml', 'get the xml file from device')
     DBD = ConstString('dbd', 'list all schemes and tables in all found databases')
     PATH = ConstString('path', 'path to the folder, containing the decompiled java code')
+    PATTERN = ConstString('pattern', 'the pattern to search')
     DESC = 'Android Secure Storage Analysis Tool'
-    STATIC_FLAGS = [SXML.flag, SKEY.flag, SCRYPT.flag]
+    STATIC_FLAGS = [SXML.flag, SKEY.flag, SCRYPT.flag, SFIND.flag]
     DYNAMIC_FLAGS = [DXML.flag, DBD.flag]
 
     ERR_NO_WORK_MODE = 'No work mode specified! Please run the script with --help flag to get help'
     ERR_NO_PATH = 'Please specify the path to Java decompiled code directory via --path flag'
+    ERR_NO_PATTERN = 'Please specify the pattern to match via --pattern flag'
+    GET_REGEXP = r'get(Int|Boolean|Float|Long|String|All)'
+    SET_REGEXP = r'put(Int|Boolean|Float|Long|String|All)'
+    LIS_REGEXP = r'ChangeListener'
+    PREFS_REGEXP = r'sharedPreferences'
 
-    PREFS = 'sharedpreferences'
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    RED = '\033[91m'
+    ENDC = '\033[0m'
+
 
 class Logger:
     """
@@ -47,11 +58,29 @@ class Logger:
 
     @staticmethod
     def error_output(text):
-        raise ValueError(text)
+        raise ValueError(Const.RED + text + Const.ENDC)
 
     @staticmethod
     def line_output(line, number, file):
-        print('Found interesting line at %s:%d\n%s') % (file, number, line)
+        print('Found interesting line at %s:%d\n%s%s%s' % (file.path, number, Const.RED, line, Const.ENDC))
+
+    @staticmethod
+    def xml_output(file, getters, setters, listeners, rest):
+        if len(getters) + len(setters) + len(listeners) + len(rest) == 0:
+            return
+        print(Const.GREEN + 'Results for file: ' + file + Const.ENDC)
+        if len(getters) > 0:
+            print('\t' + Const.YELLOW + 'Getters: ' + Const.ENDC)
+            print('\t\t' + '\t\t'.join(getters))
+        if len(setters) > 0:
+            print('\t' + Const.YELLOW + 'Setters: ' + Const.ENDC)
+            print('\t\t' + '\t\t'.join(setters))
+        if len(listeners) > 0:
+            print('\t' + Const.YELLOW + 'Listeners: ' + Const.ENDC)
+            print('\t\t' + '\t\t'.join(listeners))
+        if len(rest) > 0:
+            print('\t' + Const.YELLOW + 'Rest: ' + Const.ENDC)
+            print('\t\t' + '\t\t'.join(rest))
 
 
 class Menu:
@@ -65,6 +94,8 @@ class Menu:
         parser.add_argument('--' + Const.SXML.flag, action='store_true', help=Const.SXML.help)
         parser.add_argument('--' + Const.SKEY.flag, action='store_true', help=Const.SKEY.help)
         parser.add_argument('--' + Const.SCRYPT.flag, action='store_true', help=Const.SCRYPT.help)
+        parser.add_argument('--' + Const.SFIND.flag, action='store_true', help=Const.SFIND.help)
+        parser.add_argument('--' + Const.PATTERN.flag, help=Const.PATTERN.help)
         parser.add_argument('--' + Const.DXML.flag, action='store_true', help=Const.DXML.help)
         parser.add_argument('--' + Const.DBD.flag, action='store_true', help=Const.DBD.help)
         parser.add_argument('--' + Const.PATH.flag, help=Const.PATH.help)
@@ -85,8 +116,13 @@ class Menu:
         if key in Const.STATIC_FLAGS:
             if self.args[Const.PATH.flag] is None:
                 Logger.error_output(Const.ERR_NO_PATH)
-            java = Java(self.args['path'])
-            st_analyzer = XMLStatic(java)
+            java = Java(self.args[Const.PATH.flag])
+            if key == Const.SXML.flag:
+                st_analyzer = XMLStatic(java)
+            elif key == Const.SFIND.flag:
+                if self.args[Const.PATTERN.flag] is None:
+                    Logger.error_output(Const.ERR_NO_PATTERN)
+                st_analyzer = FinderStatic(java, self.args[Const.PATTERN.flag])
             st_analyzer.analyze()
         elif key in Const.DYNAMIC_FLAGS:
             dynamic = Dynamic()
@@ -143,10 +179,45 @@ class XMLStatic(Static):
         super(self.__class__, self).__init__(java)
 
     def analyze(self):
+        setters = []
+        getters = []
+        listeners = []
+        rest = []
+        set_re = re.compile(Const.SET_REGEXP, re.IGNORECASE)
+        get_re = re.compile(Const.GET_REGEXP, re.IGNORECASE)
+        lis_re = re.compile(Const.LIS_REGEXP, re.IGNORECASE)
+        rest_re = re.compile(Const.PREFS_REGEXP, re.IGNORECASE)
         for file in self.get_next_file():
             for num, line in enumerate(file.content):
-                if re.search(Const.PREFS, line, re.IGNORECASE):
-                    Logger.line_output(line, num, file.path)
+                if re.search(get_re, line):
+                    getters.append(str(num) + ' : ' + line)
+                elif re.search(set_re, line):
+                    setters.append(str(num) + ' : ' + line)
+                elif re.search(lis_re, line):
+                    listeners.append(str(num) + ' : ' + line)
+                elif re.search(rest_re, line):
+                    rest.append(str(num) + ' : ' + line)
+            Logger.xml_output(file.path, getters, setters, listeners, rest)
+            setters[:] = []
+            getters[:] = []
+            listeners[:] = []
+            rest[:] = []
+
+
+class FinderStatic(Static):
+    """
+    Does the pattern matching to all the string in all files.
+    """
+    def __init__(self, java, pattern):
+        super().__init__(java)
+        self.pattern = pattern
+
+    def analyze(self):
+        r = re.compile(self.pattern, re.IGNORECASE)
+        for file in self.get_next_file():
+            for num, line in enumerate(file.content):
+                if re.search(r, line):
+                    Logger.line_output(line, num, file)
 
 
 class KeyStatic(Static):
