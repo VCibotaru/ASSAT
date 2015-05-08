@@ -1,6 +1,14 @@
 __author__ = 'viktorchibotaru'
 
 import argparse
+import os
+
+
+class File:
+    """Class for convenient storage of file name and content. Is used in static analysis and outputting"""
+    def __init__(self, content, path):
+        self.content = content
+        self.path = path
 
 
 class ConstString:
@@ -29,7 +37,7 @@ class Logger:
     """
     Logger class is used for outputting. Maybe the app will support more complex logging
     features in future, so I decided to create a dedicated class for them.
-    Now all it does is simple print(text).
+    Now all it does is simple print(text) and exception(text) in case of some error.
     """
     @staticmethod
     def normal_output(text):
@@ -72,7 +80,7 @@ class Menu:
             if self.args[Const.PATH.flag] is None:
                 Logger.error_output(Const.ERR_NO_PATH)
             java = Java(self.args['path'])
-            st_analyzer = Static(java)
+            st_analyzer = XMLStatic(java)
             st_analyzer.analyze()
         elif key in Const.DYNAMIC_FLAGS:
             dynamic = Dynamic()
@@ -84,30 +92,59 @@ class Java:
     Java class is created for convenient work with the program representation
     on hard disk (be it decompiled text or byte code). Now it supports only the
     text variant, but it`s in my plans to expand its features.
+
+    This class` main task is to recursively scan the given folder for all code files
+    and to return their contents one by one. This is done in two steps, explained beyond.
     """
     def __init__(self, path):
         self.path = path
 
+    """Java.files() is a simple generator that returns all the files in given directory  one at a time"""
+    def files(self):
+        for dir_path, dir_names, file_names in os.walk(self.path):
+            for filename in file_names:
+                yield os.path.join(dir_path, filename)
 
-class Static:
+    """Java.get_file_content() returns the content of the selected file"""
+    def get_file_content(self, filepath):
+        file = open(filepath)
+        return file.read()
+
+
+class Static(object):
     """
     The base class for all static analyzers.
     """
     def __init__(self, java):
         self.java = java
 
-    def analyze(self):
-        pass
+    """
+    get_next_file() is a generator that returns one by one File objects,
+    containing  the file path and the code in file.
+    """
+    def get_next_file(self):
+        for filename in self.java.files():
+            if filename.endswith('java'):
+                yield File(self.java.get_file_content(filename), filename)
 
 
 class XMLStatic(Static):
     def __init__(self, java):
-        super(XMLStatic, self).__init__(java)
+        super(self.__class__, self).__init__(java)
+
+    def analyze(self):
+        for file in self.get_next_file():
+            print(file.path + '\n' + file.content)
+            break
 
 
 class KeyStatic(Static):
     def __init__(self, java):
-        super(KeyStatic, self).__init__(java)
+        super().__init__(java)
+
+    def analyze(self):
+        for file in self.get_next_file():
+            print(file.path + '\n' + file.content)
 
 
 class Dynamic:
