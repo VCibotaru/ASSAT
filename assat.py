@@ -2,7 +2,7 @@ __author__ = 'viktorchibotaru'
 
 import argparse
 import os
-
+import re
 
 class File:
     """Class for convenient storage of file name and content. Is used in static analysis and outputting"""
@@ -29,9 +29,11 @@ class Const:
     DESC = 'Android Secure Storage Analysis Tool'
     STATIC_FLAGS = [SXML.flag, SKEY.flag, SCRYPT.flag]
     DYNAMIC_FLAGS = [DXML.flag, DBD.flag]
+
     ERR_NO_WORK_MODE = 'No work mode specified! Please run the script with --help flag to get help'
     ERR_NO_PATH = 'Please specify the path to Java decompiled code directory via --path flag'
 
+    PREFS = 'sharedpreferences'
 
 class Logger:
     """
@@ -46,6 +48,10 @@ class Logger:
     @staticmethod
     def error_output(text):
         raise ValueError(text)
+
+    @staticmethod
+    def line_output(line, number, file):
+        print('Found interesting line at %s:%d\n%s') % (file, number, line)
 
 
 class Menu:
@@ -108,7 +114,7 @@ class Java:
     """Java.get_file_content() returns the content of the selected file"""
     def get_file_content(self, filepath):
         file = open(filepath)
-        return file.read()
+        return file.readlines()
 
 
 class Static(object):
@@ -129,13 +135,18 @@ class Static(object):
 
 
 class XMLStatic(Static):
+    """
+    Does the static xml analysis in analyze method(). Now it`s simple pattern matching, maybe i will
+    figure out something smarter. Also it would be great to wrap up the output nicely (a table or similar).
+    """
     def __init__(self, java):
         super(self.__class__, self).__init__(java)
 
     def analyze(self):
         for file in self.get_next_file():
-            print(file.path + '\n' + file.content)
-            break
+            for num, line in enumerate(file.content):
+                if re.search(Const.PREFS, line, re.IGNORECASE):
+                    Logger.line_output(line, num, file.path)
 
 
 class KeyStatic(Static):
