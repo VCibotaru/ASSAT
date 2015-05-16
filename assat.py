@@ -15,9 +15,9 @@ class File:
 
 class ConstString:
     """Class for holding (flag, help) pairs used for setting work modes in Menu class"""
-    def __init__(self, flag, help):
-        self.flag = flag
-        self.help = help
+    def __init__(self, _flag, _help):
+        self.flag = _flag
+        self.help = _help
 
 
 class Const:
@@ -30,7 +30,7 @@ class Const:
     DBD = ConstString('dbd', 'list all schemes and tables in all found databases')
     PATH = ConstString('path', 'path to the folder, containing the decompiled java code used for static analysis')
     PATTERN = ConstString('pattern', 'the pattern to search used in sfind')
-    NOCOLOR = ConstString('nocolor', 'use this flag to disable color output (use this when printing to file')
+    NOCOLOR = ConstString('nocolor', 'use this flag to disable color output (use this when printing to file)')
     DESC = 'Android Secure Storage Analysis Tool'
     STATIC_FLAGS = [SXML.flag, SKEY.flag, SCRYPT.flag, SFIND.flag]
     DYNAMIC_FLAGS = [DXML.flag, DBD.flag]
@@ -111,8 +111,8 @@ class KeyFileData:
     """get_string() returns the stored data in a pretty formatted manner"""
     def get_string(self):
         s = ''
-        for str in self.strings:
-            s += '\t' + str
+        for tmp in self.strings:
+            s += '\t' + tmp
         return s
 
 
@@ -133,10 +133,6 @@ class Logger:
     def error_output(text):
         raise ValueError(Const.RED + text + Const.ENDC)
 
-    @staticmethod
-    def line_output(line, number, file):
-        print('Found interesting line at %s%s%s:%d\n%s%s%s' % (Const.GREEN, file.path, Const.ENDC, number, Const.RED, line, Const.ENDC))
-
     """ output_data() outputs the data from Data object"""
     @staticmethod
     def output_data(data):
@@ -156,8 +152,8 @@ class Menu:
         #parser.add_argument('--' + Const.SCRYPT.flag, action='store_true', help=Const.SCRYPT.help)
         parser.add_argument('--' + Const.SFIND.flag, action='store_true', help=Const.SFIND.help)
         parser.add_argument('--' + Const.PATTERN.flag, help=Const.PATTERN.help)
-        parser.add_argument('--' + Const.DXML.flag, action='store_true', help=Const.DXML.help)
-        parser.add_argument('--' + Const.DBD.flag, action='store_true', help=Const.DBD.help)
+        #parser.add_argument('--' + Const.DXML.flag, action='store_true', help=Const.DXML.help)
+        #parser.add_argument('--' + Const.DBD.flag, action='store_true', help=Const.DBD.help)
         parser.add_argument('--' + Const.PATH.flag, help=Const.PATH.help)
         parser.add_argument('--' + Const.NOCOLOR.flag, action='store_true', help=Const.NOCOLOR.help)
 
@@ -218,7 +214,8 @@ class Java:
                 yield os.path.join(dir_path, filename)
 
     """Java.get_file_content() returns the content of the selected file"""
-    def get_file_content(self, filepath):
+    @staticmethod
+    def get_file_content(filepath):
         file = open(filepath)
         return file.readlines()
 
@@ -275,7 +272,7 @@ class XMLStatic(Static):
 
 class FinderStatic(Static):
     """
-    Does the pattern matching with all the strings in all files.
+    Does the pattern matching with the given pattern and all the strings in all files.
     """
     def __init__(self, java, pattern):
         super(self.__class__, self).__init__(java)
@@ -295,6 +292,9 @@ class FinderStatic(Static):
 
 
 class KeyStatic(Static):
+    """
+    Find all occurrences of KeyChain and KeyStore classes in all files
+    """
     def __init__(self, java):
         super(self.__class__, self).__init__(java)
 
