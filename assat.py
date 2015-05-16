@@ -4,46 +4,116 @@ import argparse
 import os
 import re
 
+
 class File:
     """Class for convenient storage of file name and content. Is used in static analysis and outputting"""
     def __init__(self, content, path):
         self.content = content
         self.path = path
+        self.data = None  # the analysis data for the file
 
 
 class ConstString:
     """Class for holding (flag, help) pairs used for setting work modes in Menu class"""
-    def __init__(self, _flag, _help):
-        self.flag = _flag
-        self.help = _help
+    def __init__(self, flag, help):
+        self.flag = flag
+        self.help = help
 
 
 class Const:
     """Just a bunch of constant values moved for convenience into a class, just like enums in C++"""
-    SXML = ConstString('sxml', 'list all occurrences of getSharedPreferences() and setSharedPreferences()')
+    SXML = ConstString('sxml', 'list all occurrences of sharedPreferences methods and objects')
     SKEY = ConstString('skey', 'list all occurrences of KeyChain/KeyStore objects')
     SCRYPT = ConstString('scrypt', 'list all occurrences of cryptographic methods')
     SFIND = ConstString('sfind', 'list all occurrences of given pattern')
     DXML = ConstString('dxml', 'get the xml file from device')
     DBD = ConstString('dbd', 'list all schemes and tables in all found databases')
-    PATH = ConstString('path', 'path to the folder, containing the decompiled java code')
-    PATTERN = ConstString('pattern', 'the pattern to search')
+    PATH = ConstString('path', 'path to the folder, containing the decompiled java code used for static analysis')
+    PATTERN = ConstString('pattern', 'the pattern to search used in sfind')
+    NOCOLOR = ConstString('nocolor', 'use this flag to disable color output (use this when printing to file')
     DESC = 'Android Secure Storage Analysis Tool'
     STATIC_FLAGS = [SXML.flag, SKEY.flag, SCRYPT.flag, SFIND.flag]
     DYNAMIC_FLAGS = [DXML.flag, DBD.flag]
 
-    ERR_NO_WORK_MODE = 'No work mode specified! Please run the script with --help flag to get help'
+    ERR_NO_WORK_MODE = 'Zero or more than one work modes specified! Please run the script with --help flag to get help'
     ERR_NO_PATH = 'Please specify the path to Java decompiled code directory via --path flag'
     ERR_NO_PATTERN = 'Please specify the pattern to match via --pattern flag'
-    GET_REGEXP = r'get(Int|Boolean|Float|Long|String|All)'
-    SET_REGEXP = r'put(Int|Boolean|Float|Long|String|All)'
-    LIS_REGEXP = r'ChangeListener'
+    GET_REGEXP = r'pref.*get(Int|Boolean|Float|Long|String)'
+    SET_REGEXP = r'pref.*put(Int|Boolean|Float|Long|String)'
     PREFS_REGEXP = r'sharedPreferences'
+
+    KEY_REGEXP = r'KeyChain|KeyStore'
 
     GREEN = '\033[92m'
     YELLOW = '\033[93m'
     RED = '\033[91m'
     ENDC = '\033[0m'
+
+    HEADER = 'Scan results'
+    NO_RES = 'No results found'
+
+
+class Data:
+    """
+    Data class is used for storing the output data for all files in a convenient manner.
+    It also does the necessary formatting, depending on task that was done.
+    Data.header              - The message that will be printed first if any results are found
+    Data.files               - List of files to be printed. One object corresponds to one file.
+    Data.no_results_header   - The message that will be printed in case that no results are found
+    """
+    def __init__(self):
+        self.header = Const.GREEN + Const.HEADER + Const.ENDC
+        self.files = []
+        self.no_results_header = Const.RED + Const.NO_RES + Const.ENDC
+
+    def append_file(self, file):
+        self.files.append(file)
+
+    """get_data() returns the stored data with the right header"""
+    def get_data(self):
+        s = ''
+        for f in self.files:
+            tmp = f.data.get_string()
+            if len(tmp):
+                s += '%s%s%s\n%s' % (Const.GREEN, f.path, Const.ENDC, tmp)
+        if len(s) > 0:
+            s = self.header + '\n' + s
+        else:
+            s = self.no_results_header
+        return s
+
+
+class XMLFileData:
+    """
+    Does the data formatting in a specific manner for XML scan results.
+    """
+    def __init__(self, getters, setters, rest):
+        self.keys = ['Getters', 'Setters', 'Rest']
+        self.data = {self.keys[0]: getters[:], self.keys[1]: setters[:], self.keys[2]: rest[:]}
+
+    """get_string() returns the stored data in a pretty formatted manner"""
+    def get_string(self):
+        s = ''
+        for key in self.keys:
+            if len(self.data[key]) > 0:
+                s += '\t%s%s%s\n\t\t' % (Const.RED, key, Const.ENDC)
+                s += '\t\t'.join(self.data[key])
+        return s
+
+
+class KeyFileData:
+    """
+    Does the data formatting in a specific manner for XML scan results.
+    """
+    def __init__(self, strings):
+        self.strings = strings
+
+    """get_string() returns the stored data in a pretty formatted manner"""
+    def get_string(self):
+        s = ''
+        for str in self.strings:
+            s += '\t' + str
+        return s
 
 
 class Logger:
@@ -56,31 +126,21 @@ class Logger:
     def normal_output(text):
         print(text)
 
+    """
+    If the app encounters an error, this method is used. Basically it only raises an error and prints it with red color
+    """
     @staticmethod
     def error_output(text):
         raise ValueError(Const.RED + text + Const.ENDC)
 
     @staticmethod
     def line_output(line, number, file):
-        print('Found interesting line at %s:%d\n%s%s%s' % (file.path, number, Const.RED, line, Const.ENDC))
+        print('Found interesting line at %s%s%s:%d\n%s%s%s' % (Const.GREEN, file.path, Const.ENDC, number, Const.RED, line, Const.ENDC))
 
+    """ output_data() outputs the data from Data object"""
     @staticmethod
-    def xml_output(file, getters, setters, listeners, rest):
-        if len(getters) + len(setters) + len(listeners) + len(rest) == 0:
-            return
-        print(Const.GREEN + 'Results for file: ' + file + Const.ENDC)
-        if len(getters) > 0:
-            print('\t' + Const.YELLOW + 'Getters: ' + Const.ENDC)
-            print('\t\t' + '\t\t'.join(getters))
-        if len(setters) > 0:
-            print('\t' + Const.YELLOW + 'Setters: ' + Const.ENDC)
-            print('\t\t' + '\t\t'.join(setters))
-        if len(listeners) > 0:
-            print('\t' + Const.YELLOW + 'Listeners: ' + Const.ENDC)
-            print('\t\t' + '\t\t'.join(listeners))
-        if len(rest) > 0:
-            print('\t' + Const.YELLOW + 'Rest: ' + Const.ENDC)
-            print('\t\t' + '\t\t'.join(rest))
+    def output_data(data):
+        print(data.get_data())
 
 
 class Menu:
@@ -93,12 +153,14 @@ class Menu:
         parser = argparse.ArgumentParser(description=Const.DESC)
         parser.add_argument('--' + Const.SXML.flag, action='store_true', help=Const.SXML.help)
         parser.add_argument('--' + Const.SKEY.flag, action='store_true', help=Const.SKEY.help)
-        parser.add_argument('--' + Const.SCRYPT.flag, action='store_true', help=Const.SCRYPT.help)
+        #parser.add_argument('--' + Const.SCRYPT.flag, action='store_true', help=Const.SCRYPT.help)
         parser.add_argument('--' + Const.SFIND.flag, action='store_true', help=Const.SFIND.help)
         parser.add_argument('--' + Const.PATTERN.flag, help=Const.PATTERN.help)
         parser.add_argument('--' + Const.DXML.flag, action='store_true', help=Const.DXML.help)
         parser.add_argument('--' + Const.DBD.flag, action='store_true', help=Const.DBD.help)
         parser.add_argument('--' + Const.PATH.flag, help=Const.PATH.help)
+        parser.add_argument('--' + Const.NOCOLOR.flag, action='store_true', help=Const.NOCOLOR.help)
+
         self.args = vars(parser.parse_args())
 
     """
@@ -107,6 +169,12 @@ class Menu:
     specific class and calls it`s analyze() method.
     """
     def work(self):
+        if self.args[Const.NOCOLOR.flag]:
+            Const.GREEN = ''
+            Const.RED = ''
+            Const.YELLOW = ''
+            Const.ENDC = ''
+            self.args[Const.NOCOLOR.flag] = False
         values = list(self.args.values())
         if values.count(True) != 1:
             Logger.error_output(Const.ERR_NO_WORK_MODE)
@@ -123,6 +191,8 @@ class Menu:
                 if self.args[Const.PATTERN.flag] is None:
                     Logger.error_output(Const.ERR_NO_PATTERN)
                 st_analyzer = FinderStatic(java, self.args[Const.PATTERN.flag])
+            else:
+                st_analyzer = KeyStatic(java)
             st_analyzer.analyze()
         elif key in Const.DYNAMIC_FLAGS:
             dynamic = Dynamic()
@@ -179,54 +249,66 @@ class XMLStatic(Static):
         super(self.__class__, self).__init__(java)
 
     def analyze(self):
+        data = Data()
         setters = []
         getters = []
-        listeners = []
         rest = []
         set_re = re.compile(Const.SET_REGEXP, re.IGNORECASE)
         get_re = re.compile(Const.GET_REGEXP, re.IGNORECASE)
-        lis_re = re.compile(Const.LIS_REGEXP, re.IGNORECASE)
         rest_re = re.compile(Const.PREFS_REGEXP, re.IGNORECASE)
         for file in self.get_next_file():
             for num, line in enumerate(file.content):
+                s = '%5d : %s\n' % (num, line.strip())
                 if re.search(get_re, line):
-                    getters.append(str(num) + ' : ' + line)
+                    getters.append(s)
                 elif re.search(set_re, line):
-                    setters.append(str(num) + ' : ' + line)
-                elif re.search(lis_re, line):
-                    listeners.append(str(num) + ' : ' + line)
+                    setters.append(s)
                 elif re.search(rest_re, line):
-                    rest.append(str(num) + ' : ' + line)
-            Logger.xml_output(file.path, getters, setters, listeners, rest)
+                    rest.append(s)
+            file.data = XMLFileData(getters, setters, rest)
+            data.append_file(file)
             setters[:] = []
             getters[:] = []
-            listeners[:] = []
             rest[:] = []
+        Logger.output_data(data)
 
 
 class FinderStatic(Static):
     """
-    Does the pattern matching to all the string in all files.
+    Does the pattern matching with all the strings in all files.
     """
     def __init__(self, java, pattern):
-        super().__init__(java)
+        super(self.__class__, self).__init__(java)
         self.pattern = pattern
 
     def analyze(self):
         r = re.compile(self.pattern, re.IGNORECASE)
+        data = Data()
+        tmp = []
         for file in self.get_next_file():
             for num, line in enumerate(file.content):
                 if re.search(r, line):
-                    Logger.line_output(line, num, file)
+                    tmp.append('%5d : %s\n' % (num, line.strip()))
+            file.data = KeyFileData(tmp)
+            data.append_file(file)
+        Logger.output_data(data)
 
 
 class KeyStatic(Static):
     def __init__(self, java):
-        super().__init__(java)
+        super(self.__class__, self).__init__(java)
 
     def analyze(self):
+        r = re.compile(Const.KEY_REGEXP, re.IGNORECASE)
+        data = Data()
         for file in self.get_next_file():
-            print(file.path + '\n' + file.content)
+            tmp = []
+            for num, line in enumerate(file.content):
+                if re.search(r, line):
+                    tmp.append('%5d : %s\n' % (num, line.strip()))
+            file.data = KeyFileData(tmp)
+            data.append_file(file)
+        Logger.output_data(data)
 
 
 class Dynamic:
